@@ -1,83 +1,148 @@
+<div align="center">
+
 # 行业信息助手 (Industry Information Assistant)
 
-一个基于 AI 的深度研究助手，支持智能搜索、知识图谱、数据可视化等功能。
+基于 AI Agent 的一站式行业研究与信息智能分析平台
 
-## 目录
-- [环境要求](#环境要求)
-- [快速启动](#快速启动)
-- [详细配置](#详细配置)
-- [常见问题](#常见问题)
+支持**深度研究**、**智能问答**、**知识库 RAG**、**行业资讯/招投标监控**、**数据库 Text2SQL** 等能力，
+帮助研究人员与分析师快速完成多行业的资料检索、信息聚合与深度分析报告生成。
+
+</div>
 
 ---
 
-## 环境要求
+## ✨ 功能特性
+
+- **🧠 AI 深度研究**：基于 Multi-Agent 图谱编排的深度研究流程，支持搜索 → 多轮迭代 → 研究报告生成，全程流式输出（SSE），研究历史可随时恢复。
+- **💬 智能问答**：基于 Qwen 大模型 + 联网检索的对话助手，支持流式回复、附件上传、多会话管理。
+- **📚 知识库 RAG**：文档上传解析（PDF/Word 等，可选阿里云 DocMind），切片向量化（Milvus），实现基于本地知识库的精准检索增强问答。
+- **📰 行业资讯监控**：内置定时任务自动采集行业新闻与招投标信息，并支持按行业维度查看与统计分析。
+- **🗄️ 数据库智能查询（Text2SQL）**：通过自然语言直接查询行业结构化数据，自动生成 SQL 并返回结果。
+- **📈 数据可视化**：内置 ECharts 图表生成，支撑研究报告中的可视化呈现。
+- **🧠 长期记忆**：多轮对话中的用户长期记忆管理与沉淀。
+- **🏭 多行业覆盖**：内置智慧交通、金融科技、医疗健康、能源电力等行业配置，关键词与检索策略可灵活扩展。
+- **🔐 用户认证**：JWT 令牌认证 + 会话隔离。
+
+---
+
+## 🏗️ 系统架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         前端 (React 19)                      │
+│  首页 / 对话 / 深度研究 / 知识库 / 资讯 / 招投标 / 数据库 / 记忆 │
+└──────────────────────────┬──────────────────────────────────┘
+                           │  HTTP / SSE
+┌──────────────────────────▼──────────────────────────────────┐
+│                      后端 (FastAPI)                          │
+│  Auth · Chat · Research · Knowledge · News · Bidding        │
+│  Memory · Database · Document · Attachment · Session        │
+└───────┬──────────────┬──────────────┬──────────────┬────────┘
+        │              │              │              │
+        ▼              ▼              ▼              ▼
+   PostgreSQL       Redis         Milvus+etcd      Elasticsearch
+   (业务数据)       (缓存)         +MinIO(向量/对象)  (全文检索,可选)
+```
+
+> Milvus 依赖 etcd 与 MinIO 组件，已在 `docker-compose.yml` 中一并编排。
+
+---
+
+## 🧰 技术栈
+
+| 层级 | 技术 |
+|------|------|
+| **前端** | React 19 · TypeScript · Vite · Ant Design 5 · ECharts · React Router 6 · Valtio |
+| **后端** | Python 3.10+ · FastAPI · SQLAlchemy 2 · Uvicorn/Gunicorn · APScheduler |
+| **大模型** | 阿里云百炼（DashScope / Qwen）· OpenRouter（可选多模型网关） |
+| **检索/向量** | Milvus 2.3 · llama-index · 百炼 Embedding / Rerank |
+| **基础设施** | PostgreSQL 15 · Redis 7 · Elasticsearch 8 · MinIO · etcd |
+| **部署** | Docker Compose · Shell 一键脚本 |
+
+---
+
+## 📁 目录结构
+
+```
+industry_information_assistant/
+├── backend/                        # 后端服务 (FastAPI)
+│   ├── app/
+│   │   ├── app_main.py             # 入口文件 (FastAPI app)
+│   │   ├── router/                 # API 路由 (auth/chat/research/news/knowledge...)
+│   │   ├── service/                # 业务逻辑 (深度研究/检索/资讯采集/股票/Text2SQL...)
+│   │   ├── core/                   # 核心 (数据库/Redis/安全/JWT)
+│   │   ├── models/                 # SQLAlchemy 数据模型
+│   │   ├── schemas/                # 请求/响应数据模型
+│   │   └── config/                 # 行业与 LLM 配置
+│   ├── requirements.txt            # Python 依赖
+│   ├── .env.example                # 环境变量示例
+│   └── Dockerfile                  # 后端镜像
+├── frontend/                       # 前端服务 (React + Vite)
+│   ├── src/
+│   │   ├── pages/                  # 页面 (chat/research/knowledge/news/bidding...)
+│   │   ├── components/             # 通用组件
+│   │   ├── router/                 # 前端路由
+│   │   ├── api/                    # 接口封装
+│   │   └── assets/                 # 静态资源
+│   ├── package.json
+│   └── vite.config.ts
+├── docker/init-db/                 # 数据库初始化脚本
+├── docker-compose.yml              # 中间件一键编排
+├── start-services.sh               # 服务一键管理脚本
+└── data/                           # 示例数据/文档
+```
+
+---
+
+## 🚀 快速开始
+
+### 环境要求
 
 | 依赖 | 版本要求 | 说明 |
 |------|---------|------|
-| Docker | 20.0+ | 运行所有基础服务（PostgreSQL、Redis、Milvus、Elasticsearch） |
+| Docker | 20.0+ | 运行 PostgreSQL、Redis、Milvus、Elasticsearch 等中间件 |
 | Python | 3.10+ | 后端服务 |
 | Node.js | 18+ | 前端构建 |
 
----
+### 1. 启动基础服务（推荐使用脚本）
 
-## 快速启动
-
-### 1. 下载项目
 ```bash
 cd industry_information_assistant
-```
 
-### 2. 一键启动所有基础服务 (推荐)
-
-**方式 A: 使用启动脚本（推荐）**
-```bash
-# 在项目根目录执行
+# 方式 A: 使用一键启动脚本（推荐）
 chmod +x start-services.sh
 ./start-services.sh start
-```
 
-**方式 B: 使用 Docker Compose**
-```bash
-# 在项目根目录执行
+# 方式 B: 使用 Docker Compose
 docker compose up -d
 ```
 
 验证服务状态：
+
 ```bash
-# 方式 A
-./start-services.sh status
-
-# 方式 B
-docker compose ps
-
-# 应该看到以下服务运行中:
-# - industry_postgres (PostgreSQL)
-# - industry_redis (Redis)
-# - industry_milvus (Milvus)
-# - industry_elasticsearch (Elasticsearch)
-# - industry_minio (MinIO)
-# - industry_etcd (etcd)
+./start-services.sh status          # 或 docker compose ps
 ```
 
-**服务访问地址：**
-- PostgreSQL: `localhost:5432` (用户名: `postgres`, 密码: `postgres123`)
-- Redis: `localhost:6379`
-- Milvus: `localhost:19530`
-- Elasticsearch: `localhost:1200`
-- MinIO Console: `localhost:9001` (admin/minioadmin)
+预期运行的服务：
 
-### 3. 配置环境变量
+| 服务 | 容器名 | 端口 |
+|------|--------|------|
+| PostgreSQL | `industry_postgres` | `5432` |
+| Redis | `industry_redis` | `6379` |
+| Milvus | `industry_milvus` | `19530` |
+| etcd | `industry_etcd` | `2379` |
+| MinIO（Console） | `industry_minio` | `9000 / 9001`（admin/minioadmin） |
+| Elasticsearch（可选） | `industry_elasticsearch` | `1200` |
+
+### 2. 配置环境变量
 
 ```bash
 cd backend
-
-# 复制示例配置文件
 cp .env.example .env
-
-# 编辑 .env 文件，填入你的 API Key
 ```
 
-**必填的 API Key（其他配置已预配置好）：**
+**必填 API Key（其余配置已预置，通常无需修改）：**
+
 ```env
 # 阿里云百炼 (LLM & Embedding) - 必填
 DASHSCOPE_API_KEY=your-dashscope-api-key
@@ -85,190 +150,92 @@ DASHSCOPE_API_KEY=your-dashscope-api-key
 # 搜索服务 - 必填
 BOCHA_API_KEY=your-bocha-api-key
 
-# PostgreSQL 配置（已在 Docker 中配置，通常无需修改）
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres123
-POSTGRES_DB=industry_assistant
-
-# JWT 密钥（生产环境建议修改）
+# JWT 密钥（生产环境务必修改为随机值）
 JWT_SECRET_KEY=your-super-secret-key-change-in-production
 ```
 
-**注意：**
-- PostgreSQL、Redis、Milvus 的配置已在 Docker Compose 中设置好
-- `.env.example` 文件中的默认值与 Docker 配置匹配
-- 如果使用 Docker，数据库相关配置**通常无需修改**
-- 生产环境务必修改 `JWT_SECRET_KEY` 为随机密钥
-
-### 4. 安装后端依赖 & 启动
+### 3. 启动后端
 
 ```bash
 cd backend
 
-# 创建虚拟环境 (推荐)
+# 创建虚拟环境（推荐）
 conda create -n deepresearch python=3.10
 conda activate deepresearch
 
-# 安装依赖
 pip install -r requirements.txt
 
-# 启动后端服务
+# 启动后端
 python app/app_main.py
 ```
 
-后端默认运行在 `http://localhost:8000`
+后端默认运行在 `http://localhost:8000`，接口文档见 `http://localhost:8000/docs`。
 
-### 5. 安装前端依赖 & 启动
+### 4. 启动前端
 
 ```bash
 cd frontend
-
-# 安装依赖
 npm install --legacy-peer-deps
-
-# 开发模式启动
 npm run dev
 ```
 
-前端默认运行在 `http://localhost:5173/login`
+前端默认运行在 `http://localhost:5173/login`。
 
 ---
 
-## 详细配置
+## ⚙️ 环境变量说明
 
-### 环境变量说明
-
-#### 必填配置
+### 必填配置
 
 | 变量名 | 说明 | 申请地址 |
 |--------|------|----------|
-| `DASHSCOPE_API_KEY` | 阿里云百炼 (LLM & Embedding) | https://bailian.console.aliyun.com/ |
+| `DASHSCOPE_API_KEY` | 阿里云百炼（LLM & Embedding） | https://bailian.console.aliyun.com/ |
 | `BOCHA_API_KEY` | 博查搜索 API | https://open.bochaai.com/ |
-| `POSTGRES_*` | PostgreSQL 连接配置 | - |
-| `REDIS_HOST/PORT` | Redis 连接配置 | - |
-| `MILVUS_HOST/PORT` | Milvus 向量数据库配置 | - |
-| `JWT_SECRET_KEY` | JWT 认证密钥 (自定义字符串) | - |
+| `POSTGRES_*` | PostgreSQL 连接配置 | Docker 已配置 |
+| `REDIS_HOST/PORT` | Redis 连接配置 | Docker 已配置 |
+| `MILVUS_HOST/PORT` | Milvus 向量数据库 | Docker 已配置 |
+| `JWT_SECRET_KEY` | JWT 认证密钥 | 自定义 |
 
-#### 其它配置
+### 可选配置
 
 | 变量名 | 说明 | 申请地址 |
 |--------|------|----------|
-| `DOCMIND_ACCESS_KEY_ID` | 阿里云 DocMind 文档解析 | https://help.aliyun.com/zh/ram/user-guide/create-an-accesskey-pair |
-| `DOCMIND_ACCESS_KEY_SECRET` | 阿里云 DocMind Secret | 同上 |
-| `BID_APP_KEY` | 招投标信息 API | https://market.aliyun.com/detail/cmapi00063550?spm=5176.730005.result.20.3188414aM3Wls9&innerSource=search_%E6%8B%9B%E6%8A%95%E6%A0%87#sku=yuncode5755000002 |
-| `BID_APP_SECRET` | 招投标 API Secret | 同上 |
-| `BID_APP_CODE` | 招投标 API Code | 同上 |
+| `DOCMIND_ACCESS_KEY_ID/SECRET` | 阿里云 DocMind 文档解析 | https://help.aliyun.com/zh/ram/user-guide/create-an-accesskey-pair |
+| `SERPER_API_KEY` | Serper 搜索 API | https://serper.dev/ |
 | `JUHE_STOCK_API_KEY` | 聚合数据 - 股票行情 | https://www.juhe.cn/docs/api/id/21 |
-| `OPENROUTER_API_KEY` | OpenRouter (多模型网关) | https://openrouter.ai/ |
+| `BID_APP_KEY/SECRET/CODE` | 阿里云市场 - 招投标信息 | https://market.aliyun.com/ |
+| `OPENROUTER_API_KEY` | OpenRouter 多模型网关 | https://openrouter.ai/ |
 
+---
 
-### 高级部署选项
+## 🛠️ 服务管理
 
-#### 使用本地 PostgreSQL（不推荐新手）
-
-如果你想使用本地安装的 PostgreSQL 而不是 Docker：
-
-1. **安装 PostgreSQL**
-   ```bash
-   # macOS
-   brew install postgresql@15
-   brew services start postgresql@15
-   ```
-
-2. **创建数据库和用户**
-   ```bash
-   # 连接 PostgreSQL
-   psql postgres
-
-   # 创建用户
-   CREATE USER postgres WITH PASSWORD 'postgres123';
-
-   # 创建数据库
-   CREATE DATABASE industry_assistant OWNER postgres;
-
-   # 退出
-   \q
-   ```
-
-3. **修改 Docker Compose 配置**
-   ```bash
-   # 编辑 docker-compose.yml，注释掉 postgres 服务
-   # 或者使用 backend/docker-compose-base.yml（只包含 Redis 和 Milvus）
-   cd backend
-   docker compose -f docker-compose-base.yml up -d
-   ```
-
-4. **确保 `.env` 配置正确**
-   ```env
-   POSTGRES_HOST=localhost
-   POSTGRES_PORT=5432
-   POSTGRES_USER=postgres
-   POSTGRES_PASSWORD=postgres123
-   POSTGRES_DB=industry_assistant
-   ```
-
-### 数据库初始化
-
-首次启动时，后端会自动创建数据库表。如果遇到问题，可手动执行：
-
-```sql
--- 连接数据库
--- Docker: docker exec -it industry_postgres psql -U postgres -d industry_assistant
--- 本地: psql -U postgres -d industry_assistant
-
--- 确保 research_checkpoints 表有完整的列
-ALTER TABLE research_checkpoints ADD COLUMN IF NOT EXISTS ui_state_json JSONB;
-ALTER TABLE research_checkpoints ADD COLUMN IF NOT EXISTS final_report TEXT;
-```
-
-### 服务管理
-
-#### 使用启动脚本（推荐）
+使用 `start-services.sh` 一键管理中间件：
 
 ```bash
-# 启动所有服务
-./start-services.sh start
-
-# 查看服务状态
-./start-services.sh status
-
-# 查看日志
-./start-services.sh logs              # 所有服务
-./start-services.sh logs postgres     # 特定服务
-
-# 重启服务
-./start-services.sh restart
-
-# 停止服务
-./start-services.sh stop
-
-# 清理数据（危险操作！）
-./start-services.sh clean
+./start-services.sh start      # 启动所有服务
+./start-services.sh status     # 查看服务状态
+./start-services.sh logs       # 查看日志（可指定服务，如 logs postgres）
+./start-services.sh restart    # 重启服务
+./start-services.sh stop       # 停止服务
+./start-services.sh clean      # 清理所有数据（危险操作！）
 ```
 
-#### 使用 Docker Compose
+或使用 Docker Compose：
 
 ```bash
-# 启动
 docker compose up -d
-
-# 查看状态
 docker compose ps
-
-# 查看日志
 docker compose logs -f
-docker compose logs -f postgres    # 特定服务
-
-# 停止
 docker compose down
-
-# 停止并删除数据卷（危险操作！）
-docker compose down -v
+docker compose down -v        # 停止并删除数据卷（危险！）
 ```
 
-### 上传测试文档 (可选)
+---
+
+## 🔌 接口示例
+
+**文档上传（构建本地知识库）**
 
 ```bash
 cd backend
@@ -277,96 +244,78 @@ curl -X POST "http://localhost:8000/documents/upload" \
   -F "file=@./test/test_doc.pdf"
 ```
 
----
+**深度研究（流式）**
 
-## 常见问题
-
-### Q: Docker 容器启动失败？
 ```bash
-# 使用启动脚本查看状态
-./start-services.sh status
-
-# 查看具体服务日志
-./start-services.sh logs postgres    # 查看 PostgreSQL 日志
-./start-services.sh logs             # 查看所有服务日志
-
-# 重启所有容器
-./start-services.sh restart
-
-# 或使用 Docker Compose
-docker compose down
-docker compose up -d
+curl -N -X POST "http://localhost:8000/research/stream" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "安责险在矿山行业的应用现状、主要挑战以及改进建议有哪些？",
+    "max_iterations": 2
+  }'
 ```
 
-### Q: 后端连接数据库失败？
-**常见原因：**
-1. Docker 服务未启动
-   ```bash
-   ./start-services.sh status   # 检查服务状态
-   ./start-services.sh start    # 启动服务
-   ```
+**会话问答（流式）**
 
-2. `.env` 文件配置错误
-   ```bash
-   # 确保配置与 Docker 一致
-   POSTGRES_USER=postgres
-   POSTGRES_PASSWORD=postgres123
-   POSTGRES_DB=industry_assistant
-   ```
-
-3. 端口被占用（如已安装本地 PostgreSQL）
-   ```bash
-   # 停止本地 PostgreSQL（如果有）
-   brew services stop postgresql
-   # 或者修改 docker-compose.yml 中的端口映射
-   ```
-
-### Q: 前端 npm install 报错？
 ```bash
-# 使用 legacy-peer-deps 解决依赖冲突
-npm install --legacy-peer-deps
+# 创建会话
+curl -s -X POST http://localhost:8000/chat/session
 
+# 问答（SSE 流式）
+curl -N -X POST http://localhost:8000/chat/completion \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{"session_id": "<SESSION_ID>", "question": "智慧交通行业最新政策有哪些？"}'
+```
+
+---
+
+## ❓ 常见问题
+
+**Q: Docker 容器启动失败？**
+
+```bash
+./start-services.sh status     # 查看服务状态
+./start-services.sh logs       # 查看日志定位问题
+./start-services.sh restart    # 重启所有容器
+```
+
+**Q: 后端连接数据库失败？**
+
+1. 检查 Docker 服务是否已启动：`./start-services.sh start`
+2. 核对 `.env` 中 `POSTGRES_*` 配置是否与 Docker Compose 一致
+3. 若本机端口被占用，调整 `docker-compose.yml` 中的端口映射
+
+**Q: 前端 `npm install` 报错？**
+
+```bash
+npm install --legacy-peer-deps       # 解决依赖冲突
 # 或清除缓存后重试
 rm -rf node_modules package-lock.json
 npm install --legacy-peer-deps
 ```
 
-### Q: 研究历史无法恢复右侧面板数据？
-执行数据库迁移：
+**Q: 研究历史无法恢复右侧面板数据？**
+
+执行数据库迁移后重启后端：
+
 ```sql
 ALTER TABLE research_checkpoints ADD COLUMN IF NOT EXISTS ui_state_json JSONB;
 ALTER TABLE research_checkpoints ADD COLUMN IF NOT EXISTS final_report TEXT;
 ```
-然后重启后端服务。
 
 ---
 
-## 项目结构
+## 🧭 常见部署说明
 
-```
-industry_information_assistant/
-├── backend/
-│   ├── app/
-│   │   ├── api/          # API 路由
-│   │   ├── core/         # 核心配置
-│   │   ├── models/       # 数据模型
-│   │   ├── service/      # 业务逻辑
-│   │   └── app_main.py   # 入口文件
-│   ├── docker-compose-base.yml
-│   ├── requirements.txt
-│   └── .env
-├── frontend/
-│   ├── src/
-│   │   ├── api/          # API 调用
-│   │   ├── components/   # 组件
-│   │   ├── pages/        # 页面
-│   │   └── store/        # 状态管理
-│   └── package.json
-└── READMED.md
-```
+- **数据库自动建表**：首次启动后端时会自动创建数据表，一般无需手动初始化。
+- **本地 PostgreSQL（不推荐新手）**：可手动安装 PostgreSQL 后，将 `.env` 指向本地实例，并注释掉 `docker-compose.yml` 中的 `postgres` 服务。
+- **生产部署**：请务必修改 `JWT_SECRET_KEY` 为随机密钥，并收紧 CORS 白名单。
 
 ---
 
-## API 文档
+## 📄 许可证
 
-启动后端后访问：`http://localhost:8000/docs`
+本项目源代码版权归 **深圳市深维智见教育科技有限公司** 所有。未经授权，禁止转售或仿制。
+
+> 依赖的外部服务（阿里云百炼、博查、OpenRouter 等）均有各自的许可与计费条款，请在使用前查阅对应平台文档。
