@@ -1,0 +1,33 @@
+/**
+ * Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
+ * 未经授权，禁止转售或仿制。
+ */
+
+.base-layout {
+  padding-left: 94px;
+}
+
+.base-layout__sidebar {
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 94px;
+  background-color: #fbfbfb;
+  display: flex;
+  flex-direction: column;
+
+  .base-layout__sidebar-main {
+    flex-grow: 1;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 18px;
+  }
+}
+
+.base-layout__content {
+  min-height: 100vh;
+  flex-shrink: 0;
+}
