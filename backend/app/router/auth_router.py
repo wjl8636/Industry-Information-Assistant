@@ -1,6 +1,3 @@
-# Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
-# 未经授权，禁止转售或仿制。
-
 """用户认证路由"""
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status

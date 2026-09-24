@@ -1,8 +1,3 @@
-/**
- * Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
- * 未经授权，禁止转售或仿制。
- */
-
 import IconImage from '@/assets/chat/image.svg'
 import IconSource from '@/assets/chat/source.svg'
 import IconThink from '@/assets/chat/think.svg'

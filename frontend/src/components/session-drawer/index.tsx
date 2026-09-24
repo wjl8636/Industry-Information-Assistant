@@ -1,8 +1,3 @@
-/**
- * Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
- * 未经授权，禁止转售或仿制。
- */
-
 import { useEffect, useState } from 'react'
 import { Drawer, List, Spin, Empty, Button, Popconfirm, Input, Typography, message } from 'antd'
 import { DeleteOutlined, EditOutlined, MessageOutlined, CheckOutlined, CloseOutlined } from '@ant-design/icons'
