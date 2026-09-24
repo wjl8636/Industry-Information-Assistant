@@ -1,0 +1,9 @@
+{
+  "model": null,
+  "max_iterations": null,
+  "search_web": true,
+  "search_local": false,
+  "llm_api_key": null,
+  "llm_base_url": null,
+  "search_api_key": null
+}
