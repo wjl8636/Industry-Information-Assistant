@@ -1,3 +1,6 @@
+# Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
+# 未经授权，禁止转售或仿制。
+
 """
 DeepResearch V2.0 - 毒舌评论家 Agent (CriticMaster)
 
@@ -62,7 +65,13 @@ class CriticMaster(BaseAgent):
     "overall_assessment": {{
         "quality_score": 1-10,
         "verdict": "pass/needs_revision/major_issues",
-        "summary": "整体评估摘要"
+        "summary": "整体评估摘要",
+        "dimension_scores": {{
+            "factual_consistency": 1-10,
+            "logic_completeness": 1-10,
+            "research_coverage": 1-10,
+            "citation_quality": 1-10
+        }}
     }},
     "issues": [
         {{
@@ -174,6 +183,9 @@ class CriticMaster(BaseAgent):
             # 更新质量分数
             state["quality_score"] = review_result.get("overall_assessment", {}).get("quality_score", 0.0)
             state["unresolved_issues"] = len([i for i in review_result.get("issues", []) if i.get("severity") in ["critical", "major"]])
+
+            # 记录四维评分（对齐标杆 RACE 维度）
+            state["review_dimensions"] = review_result.get("overall_assessment", {}).get("dimension_scores", {})
 
             # 发送审核结果
             self.add_message(state, "review", {

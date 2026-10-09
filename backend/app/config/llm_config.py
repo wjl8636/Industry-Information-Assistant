@@ -1,3 +1,6 @@
+# Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
+# 未经授权，禁止转售或仿制。
+
 """
 LLM 和 Agent 配置文件
 
@@ -36,45 +39,45 @@ class AgentModelConfig:
 
 @dataclass
 class AgentsConfig:
-    """所有 Agent 的配置"""
+    """所有 Agent 的配置（统一使用中转端点 qwen3.7-plus）"""
     # 规划师 - 分析问题，生成研究大纲
     architect: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(
-        model="deepseek-v3.2",
+        model="qwen3.7-plus",
         temperature=0.7,
         max_tokens=4000
     ))
 
-    # 侦察员 - 深度搜索（使用较快的模型）
+    # 侦察员 - 深度搜索
     scout: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(
-        model="qwen-plus",  # 搜索阶段用快速模型
+        model="qwen3.7-plus",
         temperature=0.5,
         max_tokens=4000
     ))
 
     # 数据分析师 - 数据提取和分析
     data_analyst: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(
-        model="deepseek-v3.2",
+        model="qwen3.7-plus",
         temperature=0.3,
         max_tokens=8000
     ))
 
     # 代码极客 - 代码生成和图表绘制
     wizard: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(
-        model="deepseek-v3.2",
+        model="qwen3.7-plus",
         temperature=0.3,
         max_tokens=8000
     ))
 
     # 审核大师 - 对抗式审核
     critic: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(
-        model="deepseek-v3.2",
+        model="qwen3.7-plus",
         temperature=0.5,
         max_tokens=4000
     ))
 
     # 首席写手 - 报告撰写
     writer: AgentModelConfig = field(default_factory=lambda: AgentModelConfig(
-        model="deepseek-v3.2",
+        model="qwen3.7-plus",
         temperature=0.7,
         max_tokens=16000
     ))
@@ -107,17 +110,22 @@ class LLMConfig:
     集中管理所有配置，支持从环境变量读取
     """
     # API 配置
-    api_key: str = field(default_factory=lambda: os.getenv("DASHSCOPE_API_KEY", ""))
-    base_url: str = field(default_factory=lambda: os.getenv(
-        "LLM_BASE_URL",
-        "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    # 多智能体默认使用中转端点（OpenAI 兼容）。优先读 MA_LLM_*，回退 DASHSCOPE。
+    api_key: str = field(default_factory=lambda: (
+        os.getenv("MA_LLM_API_KEY", "") or os.getenv("DASHSCOPE_API_KEY", "")
+    ))
+    base_url: str = field(default_factory=lambda: (
+        os.getenv("MA_LLM_BASE_URL", "") or os.getenv(
+            "LLM_BASE_URL",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        )
     ))
 
     # 搜索 API
     search_api_key: str = field(default_factory=lambda: os.getenv("BOCHA_API_KEY", ""))
 
     # 默认模型（用于未单独配置的场景）
-    default_model: str = "deepseek-v3.2"
+    default_model: str = "qwen3.7-plus"
 
     # Agent 配置
     agents: AgentsConfig = field(default_factory=AgentsConfig)

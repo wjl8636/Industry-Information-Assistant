@@ -1,3 +1,6 @@
+# Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
+# 未经授权，禁止转售或仿制。
+
 """
 DeepResearch V2.0 - Agent 基类
 
@@ -14,6 +17,16 @@ from datetime import datetime
 from openai import OpenAI
 
 from ..state import ResearchState, AgentLog
+
+# 预算控制与降级（统一在 call_llm 挂载）
+try:
+    from service.budget_controller import BudgetController, BudgetError, get_budget, wait_backoff
+except ImportError:
+    try:
+        from app.service.budget_controller import BudgetController, BudgetError, get_budget, wait_backoff
+    except ImportError:
+        # 兼容直接运行脚本
+        from ...service.budget_controller import BudgetController, BudgetError, get_budget, wait_backoff
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
 
@@ -61,7 +74,7 @@ class BaseAgent(ABC):
         max_tokens: int = 16000  # 拉满到最大值
     ) -> str:
         """
-        调用 LLM
+        调用 LLM（统一出口，挂载预算记账与失败降级）
 
         Args:
             system_prompt: 系统提示
@@ -72,8 +85,22 @@ class BaseAgent(ABC):
 
         Returns:
             LLM 响应文本
+
+        Raises:
+            顶层不抛；降级时记录 budget degraded 并返回降级结果或抛 BudgetError（由 graph 兜底）
         """
         start_time = time.time()
+
+        # 预算记账：调用前置检查
+        budget = get_budget()
+        try:
+            budget.before_call()
+            budget.check_token(model=self.model, stage=self.name)
+            budget.check_call(stage=self.name)
+        except BudgetError as be:
+            # 预算超限：记录降级，抛给 graph 顶层兜底（不杀死整个研究，跳过该步）
+            self.logger.error(f"[Budget] {self.name} 预算超限，跳过调用: {be.reason}")
+            raise BudgetError(f"{self.name} skipped due to budget") from be
 
         try:
             kwargs = {
@@ -97,13 +124,59 @@ class BaseAgent(ABC):
             content = response.choices[0].message.content
             duration = int((time.time() - start_time) * 1000)
 
+            # 记账：响应 token（近似）
+            try:
+                usage = getattr(response, "usage", None)
+                tokens = int(getattr(usage, "total_tokens", 0))
+            except Exception:
+                tokens = 0
+            budget.after_call(tokens_used=tokens)
+
             self.logger.info(f"LLM call completed in {duration}ms, response length: {len(content)}")
 
             return content
 
-        except Exception as e:
-            self.logger.error(f"LLM call failed: {e}")
+        except BudgetError:
             raise
+        except Exception as e:
+            # 失败分类降级：rate_limit 退避重试 / transient 加退避 / 其它降级
+            decision = await budget.handle_failure(e, stage=self.name)
+            self.logger.error(f"LLM call failed ({decision}): {e}")
+
+            if decision == "retry":
+                await wait_backoff(0)
+                # 退避后重试一次
+                try:
+                    kwargs = {
+                        "model": self.model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        "temperature": temperature,
+                        "max_tokens": max_tokens
+                    }
+                    if json_mode:
+                        kwargs["response_format"] = {"type": "json_object"}
+                    response = await asyncio.to_thread(
+                        self.client.chat.completions.create,
+                        **kwargs
+                    )
+                    content = response.choices[0].message.content
+                    budget.after_call(tokens_used=0)
+                    self.logger.warning(f"[Budget] {self.name} 退避重试成功")
+                    return content
+                except Exception as e2:
+                    self.logger.error(f"[Budget] {self.name} 退避重试仍失败: {e2}")
+                    # 重试失败 → 降级
+                    budget.degraded_steps.append({"stage": self.name, "reason": f"retry failed: {e2}"})
+                    raise BudgetError(f"{self.name} degraded after retry") from e2
+            elif decision == "degraded":
+                # 降级：返回空降级结果，由 caller 决定跳过该产出
+                raise BudgetError(f"{self.name} degraded ({e})") from e
+            else:
+                # raise：预算严重超限等，向上抛
+                raise BudgetError(f"{self.name} fatal ({e})") from e
 
     def parse_json_response(self, response: str) -> Dict[str, Any]:
         """安全解析JSON响应，处理markdown代码块和格式问题"""

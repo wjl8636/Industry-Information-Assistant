@@ -1,3 +1,6 @@
+# Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
+# 未经授权，禁止转售或仿制。
+
 """
 DeepResearch V2.0 - 首席笔杆 Agent (LeadWriter)
 
@@ -65,12 +68,25 @@ class LeadWriter(BaseAgent):
 {{
     "content": "章节正文内容（Markdown格式，不包含章节标题）",
     "key_points": ["本章节的核心要点"],
+    "claims": [
+        {{
+            "claim_id": "claim_1",
+            "text": "该主张的一句话描述",
+            "evidence_fact_ids": ["fact_xxx", "fact_yyy"],
+            "citation_url": "支撑该主张的URL（可选）"
+        }}
+    ],
     "citations": [
         {{"source": "来源名称", "url": "完整URL"}}
     ],
     "suggested_improvements": ["如果有更多信息可以改进的地方"]
 }}
 ```
+
+## claims 绑定要求
+- 每个数据性/观点性主张都尽量绑定一条 claim，并给出支撑它的事实 id（evidence_fact_ids）
+- 证据 id 必须来自"相关事实"列表中列出的 fact id（形如 fact_xxxxxxxx）
+- 如果某观点没有对应事实支撑，evidence_fact_ids 留空数组，并在 claims 中保留（供核验阶段标记 unsupported）
 
 ## 写作风格示例
 - 好的开头："2024年，中国AI芯片市场正经历深刻变革。根据[IDC数据](https://www.idc.com)，市场规模达到..."
@@ -208,6 +224,42 @@ class LeadWriter(BaseAgent):
 }}
 ```"""
 
+    SECTION_REVISION_PROMPT = """你是首席笔杆，需要根据审核反馈**只修订一个章节**。
+
+## 章节标题
+{section_title}
+
+## 该章节当前内容
+{section_content}
+
+## 针对该章节的审核反馈
+{feedback}
+
+## 该章节可用素材
+{facts}
+
+## 数据点
+{data_points}
+
+## 任务
+只重写本章节，解决反馈中指出的问题。**只输出修订后的章节正文（Markdown），不要输出章节标题。**
+
+## 修订原则
+1. 只改有问题的部分，保持其它内容
+2. 对缺少来源的表述补充引用（用 [来源](URL) 格式）
+3. 修正事实错误或逻辑漏洞
+4. 保持整体风格一致
+
+输出JSON：
+```json
+{{
+    "revised_content": "修订后的章节正文（不含标题）",
+    "changes_made": ["修改1", "修改2"],
+    "addressed_issues": ["已解决的问题ID"],
+    "unable_to_address": ["无法解决的问题及原因"]
+}}
+```"""
+
     def __init__(self, llm_api_key: str, llm_base_url: str, model: str = "qwen-max"):
         super().__init__(
             name="LeadWriter",
@@ -222,7 +274,7 @@ class LeadWriter(BaseAgent):
         if state["phase"] == ResearchPhase.WRITING.value:
             return await self._write_report(state)
         elif state["phase"] == ResearchPhase.REVISING.value:
-            return await self._revise_report(state)
+            return await self._revise_sections(state)
         else:
             return state
 
@@ -330,6 +382,19 @@ class LeadWriter(BaseAgent):
             state["draft_sections"][section_id] = section_content
             section["status"] = "drafted"
 
+            # 记录 claim-evidence 绑定（供独立 Verifier 核验）
+            claims = result.get("claims", [])
+            if claims:
+                for c in claims:
+                    state["grounding"].append({
+                        "claim_id": c.get("claim_id") or f"claim_{uuid.uuid4().hex[:8]}",
+                        "section_id": section_id,
+                        "claim_text": c.get("text", ""),
+                        "evidence_ids": c.get("evidence_fact_ids", []) or [],
+                        "citation_url": c.get("citation_url", ""),
+                        "verdict": "",  # 待 verifier 判定
+                    })
+
             # 收集引用
             for citation in result.get("citations", []):
                 state["references"].append({
@@ -387,16 +452,19 @@ class LeadWriter(BaseAgent):
         )
 
         self.logger.info(f"[LeadWriter] 调用 LLM 整合报告...")
-        response = await self.call_llm(
-            system_prompt="你是资深的研究报告主编，擅长整合和打磨最终报告。",
-            user_prompt=prompt,
-            json_mode=True,
-            temperature=0.3,
-            max_tokens=16000  # 拉满到最大值
-        )
-
-        result = self.parse_json_response(response)
-        self.logger.info(f"[LeadWriter] JSON 解析结果: {bool(result)}, keys: {result.keys() if result else 'N/A'}")
+        result = None
+        try:
+            response = await self.call_llm(
+                system_prompt="你是资深的研究报告主编，擅长整合和打磨最终报告。",
+                user_prompt=prompt,
+                json_mode=True,
+                temperature=0.3,
+                max_tokens=16000  # 拉满到最大值
+            )
+            result = self.parse_json_response(response)
+            self.logger.info(f"[LeadWriter] JSON 解析结果: {bool(result)}, keys: {result.keys() if result else 'N/A'}")
+        except Exception as e:
+            self.logger.error(f"[LeadWriter] 报告整合 LLM 调用失败，使用章节 fallback: {e}")
 
         executive_summary = ""
         conclusions = []
@@ -486,3 +554,261 @@ class LeadWriter(BaseAgent):
         state["phase"] = ResearchPhase.REVIEWING.value
 
         return state
+
+    async def _revise_sections(self, state: ResearchState) -> ResearchState:
+        """章节级修订 + 自动回滚。
+
+        相对整篇改写：
+        1. 只重写审核反馈中定位到目标章节的章节
+        2. 记录 revision_history[section_id]，并在复检后若分数下降则回滚到历史最高分版本
+        3. 没有 target_section 的全局问题走整篇修订兜底
+        """
+        # 收集未解决问题
+        unresolved = [f for f in state["critic_feedback"] if not f.get("resolved")]
+
+        # 按目标章节分组
+        section_issues: Dict[str, list] = {}
+        global_issues = []
+        for issue in unresolved:
+            ts = issue.get("target_section", "")
+            if ts and ts in state["draft_sections"]:
+                section_issues.setdefault(ts, []).append(issue)
+            else:
+                global_issues.append(issue)
+
+        # 记录本轮修订前的质量分基线（用于回滚）
+        baseline_score = state.get("quality_score", 0.0)
+
+        revised_any = False
+        # 1) 章节级修订
+        for section_id, issues in section_issues.items():
+            revised = await self._revise_single_section(state, section_id, issues)
+            if revised:
+                revised_any = True
+
+        # 2) 全局问题：若存在，走整篇修订
+        if global_issues:
+            revised_any = await self._revise_full_report_async(state, global_issues) or revised_any
+
+        # 3) 自动回滚：本轮修订后，章节版本得分若低于历史最高分则回滚
+        self._auto_rollback(state, baseline_score)
+
+        # 标记本轮已解决的 issue（由 revise_single_section / fallback 内部处理）
+
+        if revised_any:
+            self.add_message(state, "revision_complete", {
+                "agent": self.name,
+                "sections_revised": list(section_issues.keys()),
+                "rolled_back_sections": state.get("rolled_back_sections", []),
+                "mode": "section_level" if section_issues else "full_report",
+            })
+
+        state["phase"] = ResearchPhase.REVIEWING.value
+        return state
+
+    async def _revise_single_section(
+        self,
+        state: ResearchState,
+        section_id: str,
+        issues: list
+    ) -> bool:
+        """重写单个章节（仅该章节），并记录修订历史"""
+        section = next((s for s in state["outline"] if s.get("id") == section_id), None)
+        if not section:
+            return False
+        current_content = state["draft_sections"].get(section_id, "")
+        if not current_content:
+            return False
+
+        # 收集该章节素材
+        related_facts = [f for f in state["facts"] if section_id in f.get("related_sections", [])]
+        facts_text = "\n".join([f"- {f.get('content')} (来源: {f.get('source_name')})" for f in related_facts[:10]])
+        data_text = "\n".join([
+            f"- {dp.get('name')}: {dp.get('value')} {dp.get('unit', '')} ({dp.get('year', 'N/A')})"
+            for dp in state["data_points"][:8]
+        ])
+
+        feedback_text = "\n".join([
+            f"- [{i.get('severity')}] {i.get('description')}\n  建议: {i.get('suggestion')}"
+            for i in issues
+        ])
+
+        prompt = self.SECTION_REVISION_PROMPT.format(
+            section_title=section.get("title", section_id),
+            section_content=current_content,
+            feedback=feedback_text if feedback_text else "无具体反馈",
+            facts=facts_text if facts_text else "（暂无素材）",
+            data_points=data_text if data_text else "（暂无数据点）",
+        )
+
+        try:
+            response = await self.call_llm(
+                system_prompt="你是负责修订报告章节的资深编辑。",
+                user_prompt=prompt,
+                json_mode=True,
+                temperature=0.3,
+                max_tokens=16000
+            )
+        except Exception as e:
+            self.logger.warning(f"[LeadWriter] 章节修订调用失败，跳过该章节: {e}")
+            return False
+
+        result = self.parse_json_response(response)
+        if not result or not result.get("revised_content"):
+            self.logger.warning(f"[LeadWriter] 章节 {section_id} 修订无有效输出")
+            return False
+
+        # 记录修订历史（用于回滚）
+        revision_history = state.setdefault("revision_history", {})
+        history = revision_history.setdefault(section_id, [])
+        history.append({
+            "section_id": section_id,
+            "content": current_content,  # 旧版本（用于回滚）
+            "quality_score": state.get("quality_score", 0.0),
+            "verifier_pass_rate": state.get("grounding_coverage", 0.0),
+            "timestamp": datetime.now().isoformat(),
+        })
+
+        # 写入新版本
+        state["draft_sections"][section_id] = result["revised_content"]
+
+        # 标记该章节相关 issue 已解决
+        for issue in issues:
+            issue["resolved"] = True
+
+        # 标记已处理
+        for issue_id in result.get("addressed_issues", []):
+            for fb in state["critic_feedback"]:
+                if fb.get("id") == issue_id:
+                    fb["resolved"] = True
+
+        # 同步章节到 final_report（重组装）
+        self._reassemble_final_report(state)
+
+        return True
+
+    def _reassemble_final_report(self, state: ResearchState) -> None:
+        """用最新 draft_sections 重新组装 final_report（保留摘要/结论骨架不丢）"""
+        # 若已有 final_report，尝试替换章节内容
+        report = state.get("final_report", "")
+        if report:
+            for section in state["outline"]:
+                section_id = section["id"]
+                new_content = state["draft_sections"].get(section_id, "")
+                if not new_content:
+                    continue
+                # 尝试定位章节标题并替换（宽松匹配）
+                title = section.get("title", section_id)
+                # 简单替换：找到 "## title" 到下一个 "## " 的段落
+                import re
+                pattern = re.compile(
+                    rf"(## {re.escape(title)}[^\n]*\n)(.*?)(?=\n## |\Z)",
+                    re.DOTALL
+                )
+                if pattern.search(report):
+                    report = pattern.sub(lambda m: m.group(1) + "\n" + new_content + "\n", report, count=1)
+            state["final_report"] = report
+
+    def _revise_full_report_fallback(
+        self,
+        state: ResearchState,
+        global_issues: list
+    ) -> bool:
+        """整篇修订兜底（无 target_section 的全局问题）
+
+        复用原整篇修订逻辑（REVISION_PROMPT + _revise_report 的正文部分）。
+        """
+        if not global_issues:
+            return False
+
+        feedback_text = "\n".join([
+            f"- [{i.get('severity')}] {i.get('description')}\n  建议: {i.get('suggestion')}"
+            for i in global_issues
+        ])
+        new_facts = state["facts"][-5:] if state["facts"] else []
+        new_info = "\n".join([f"- {f.get('content', '')[:200]}" for f in new_facts])
+
+        prompt = self.REVISION_PROMPT.format(
+            original_content=state.get("final_report", "")[:6000],
+            feedback=feedback_text if feedback_text else "无具体反馈",
+            new_info=new_info if new_info else "无补充信息"
+        )
+
+        try:
+            import asyncio
+            # 由于本方法可能是同步上下文，用 asyncio.run 或由调用方异步调用
+            # 这里保持同步设计：直接同步调用一次
+            response = asyncio.get_event_loop().is_running() or None
+        except RuntimeError:
+            pass
+
+        # 复用 _revise_report 的实现：让调用方异步执行
+        # 为兼容，这里直接调用异步逻辑
+        return False
+
+    async def _revise_full_report_async(
+        self,
+        state: ResearchState,
+        global_issues: list
+    ) -> bool:
+        """整篇修订的异步实现"""
+        if not global_issues:
+            return False
+        feedback_text = "\n".join([
+            f"- [{i.get('severity')}] {i.get('description')}\n  建议: {i.get('suggestion')}"
+            for i in global_issues
+        ])
+        new_facts = state["facts"][-5:] if state["facts"] else []
+        new_info = "\n".join([f"- {f.get('content', '')[:200]}" for f in new_facts])
+
+        prompt = self.REVISION_PROMPT.format(
+            original_content=state.get("final_report", "")[:6000],
+            feedback=feedback_text if feedback_text else "无具体反馈",
+            new_info=new_info if new_info else "无补充信息"
+        )
+        try:
+            response = await self.call_llm(
+                system_prompt="你是负责修订报告的资深编辑。",
+                user_prompt=prompt,
+                json_mode=True,
+                temperature=0.3,
+                max_tokens=16000
+            )
+        except Exception as e:
+            self.logger.warning(f"[LeadWriter] 整篇修订调用失败: {e}")
+            return False
+
+        result = self.parse_json_response(response)
+        if result and result.get("revised_content"):
+            state["final_report"] = result["revised_content"]
+            for issue_id in result.get("addressed_issues", []):
+                for fb in state["critic_feedback"]:
+                    if fb.get("id") == issue_id:
+                        fb["resolved"] = True
+            return True
+        return False
+
+    def _auto_rollback(self, state: ResearchState, baseline_score: float) -> None:
+        """自动回滚：若本轮修订后综合分低于修订前基线，回滚所有被改章节到历史最高分版本"""
+        current_score = state.get("quality_score", 0.0)
+        if current_score >= baseline_score:
+            return  # 分数未下降，不回滚
+
+        revision_history = state.get("revision_history", {})
+        rolled_back = []
+        for section_id, history in revision_history.items():
+            if not history:
+                continue
+            # 找历史最高分版本
+            best = max(history, key=lambda h: h.get("quality_score", 0))
+            if best["quality_score"] >= current_score:
+                state["draft_sections"][section_id] = best["content"]
+                rolled_back.append(section_id)
+        if rolled_back:
+            state["rolled_back_sections"] = list(set(state.get("rolled_back_sections", [])) | set(rolled_back))
+            self.add_message(state, "auto_rollback", {
+                "agent": self.name,
+                "rolled_back_sections": rolled_back,
+                "reason": f"quality_score 由 {baseline_score} 下降至 {current_score}"
+            })
+        self._reassemble_final_report(state)

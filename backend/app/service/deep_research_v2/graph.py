@@ -1,3 +1,6 @@
+# Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
+# 未经授权，禁止转售或仿制。
+
 """
 DeepResearch V2.0 - LangGraph 工作流
 
@@ -34,7 +37,23 @@ except ImportError:
     logging.warning("LangGraph not installed. Using simplified workflow.")
 
 from .state import ResearchState, ResearchPhase, create_initial_state
-from .agents import ChiefArchitect, DeepScout, CodeWizard, CriticMaster, LeadWriter, DataAnalyst
+from .agents import ChiefArchitect, DeepScout, CodeWizard, CriticMaster, LeadWriter, DataAnalyst, VerifierAgent
+
+# 证据链路：引用校验 / 预算 / 门禁
+try:
+    from service.citation_validator import get_citation_validator
+    from service.budget_controller import get_budget, BudgetError
+except ImportError:
+    try:
+        from app.service.citation_validator import get_citation_validator
+        from app.service.budget_controller import get_budget, BudgetError
+    except ImportError:
+        def get_citation_validator():
+            return None
+        def get_budget():
+            return None
+        class BudgetError(Exception):
+            pass
 
 # 导入检查点服务
 try:
@@ -125,6 +144,10 @@ class DeepResearchGraph:
             self.llm_api_key, self.llm_base_url,
             config.agents.writer.model
         )
+        self.verifier = VerifierAgent(
+            self.llm_api_key, self.llm_base_url,
+            config.agents.critic.model  # 复用强模型档（核验需推理）
+        )
 
         logger.info(f"DeepResearchGraph initialized with models:")
         logger.info(f"  - Architect: {config.agents.architect.model}")
@@ -133,6 +156,7 @@ class DeepResearchGraph:
         logger.info(f"  - Wizard: {config.agents.wizard.model}")
         logger.info(f"  - Critic: {config.agents.critic.model}")
         logger.info(f"  - Writer: {config.agents.writer.model}")
+        logger.info(f"  - Verifier: {config.agents.critic.model}")
 
         # 检查点服务
         self.checkpoint_service = get_checkpoint_service()
@@ -654,6 +678,15 @@ class DeepResearchGraph:
                     yield msg
                 state["messages"] = []
 
+                # 独立 Verifier：对已绑定的 claims 做 grounding 核验（不阻塞，失败降级跳过）
+                if state.get("grounding"):
+                    try:
+                        async for msg in run_agent_with_streaming(self.verifier):
+                            yield msg
+                        state["messages"] = []
+                    except Exception as e:
+                        logger.warning(f"[Graph] Verifier 执行失败，降级跳过: {e}")
+
                 if state["phase"] == ResearchPhase.COMPLETED.value:
                     break
 
@@ -696,6 +729,50 @@ class DeepResearchGraph:
             state["phase"] = ResearchPhase.COMPLETED.value
             if self.checkpoint_service and session_id:
                 self.checkpoint_service.update_status(session_id, "completed")
+
+            # ===== 可靠性收尾：引用校验 + Grounding 门禁 + 预算同步 =====
+            # 1) 引用校验（Citation Validation）
+            try:
+                cv = get_citation_validator()
+                if cv is not None:
+                    state["citation_validation"] = cv.validate_report(
+                        state.get("final_report", ""),
+                        state.get("references", []),
+                        state.get("facts", []),
+                        state.get("raw_sources", [])
+                    )
+            except Exception as e:
+                logger.warning(f"[Graph] 引用校验失败: {e}")
+
+            # 2) 预算同步（把 budget 状态写进 state）
+            try:
+                budget = get_budget()
+                if budget is not None:
+                    state["budget"] = budget.to_dict()
+            except Exception:
+                pass
+
+            # 3) Grounding 门禁：最终报告放行前检查
+            gate_passed = True
+            gate_info = {"grounding_coverage": state.get("grounding_coverage", 0.0), "gate_passed": True, "reason": ""}
+            grounding = state.get("grounding", [])
+            if grounding:
+                total = len(grounding)
+                supported = len([g for g in grounding if g.get("verdict") == "supported"])
+                cov = supported / total if total else 0.0
+                contradicted = [g for g in grounding if g.get("verdict") == "contradicted"]
+                state["grounding_coverage"] = cov
+                if cov < 0.9 or contradicted:
+                    gate_passed = False
+                    gate_info = {
+                        "grounding_coverage": cov,
+                        "gate_passed": False,
+                        "contradicted_count": len(contradicted),
+                        "reason": f"grounding_coverage={cov:.2f}<0.9 或存在 {len(contradicted)} 条矛盾 claim",
+                    }
+                    logger.warning(f"[Graph] Grounding 门禁未通过: {gate_info['reason']}")
+            state["grounding_gate"] = gate_info
+            yield {"type": "grounding_gate", "content": gate_info}
 
             # 构建前端友好的 references
             final_facts = state.get("facts", [])

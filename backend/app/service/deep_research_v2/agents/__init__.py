@@ -1,3 +1,6 @@
+# Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
+# 未经授权，禁止转售或仿制。
+
 """
 DeepResearch V2.0 - Agents 模块
 
@@ -11,6 +14,7 @@ from .wizard import CodeWizard
 from .critic import CriticMaster
 from .writer import LeadWriter
 from .data_analyst import DataAnalyst
+from .verifier import VerifierAgent
 
 __all__ = [
     'BaseAgent',
@@ -20,5 +24,6 @@ __all__ = [
     'CodeWizard',
     'CriticMaster',
     'LeadWriter',
-    'DataAnalyst'
+    'DataAnalyst',
+    'VerifierAgent'
 ]

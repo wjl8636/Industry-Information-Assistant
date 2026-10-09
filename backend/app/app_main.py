@@ -1,3 +1,6 @@
+# Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
+# 未经授权，禁止转售或仿制。
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,8 +61,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="行业信息助手 API",
-    description="基于 AI Agent 的行业信息助手系统",
+    title="领域信息分析系统 API",
+    description="基于 AI Agent 的领域信息分析系统",
     version="2.0.0",
     lifespan=lifespan
 )

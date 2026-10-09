@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 行业信息助手 - 一键启动脚本
+# 领域信息分析系统 - 一键启动脚本
 # 用法: ./start-services.sh [command]
 # 命令: start | stop | restart | status | logs
 
@@ -145,7 +145,7 @@ clean_data() {
 
 # 显示帮助
 show_help() {
-    echo "行业信息助手 - 服务管理脚本"
+    echo "领域信息分析系统 - 服务管理脚本"
     echo ""
     echo "用法: $0 [命令]"
     echo ""

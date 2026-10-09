@@ -1,3 +1,6 @@
+# Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
+# 未经授权，禁止转售或仿制。
+
 """
 DeepResearch V2.0 - 深度侦探 Agent (DeepScout)
 
@@ -43,6 +46,25 @@ except ImportError:
         MILVUS_AVAILABLE = True
     except ImportError:
         MILVUS_AVAILABLE = False
+
+# 证据链路工具（URL 规范化 + 语义去重）
+try:
+    from service.evidence_link import normalize_url, is_same_canonical_url
+    from service.fact_dedup import get_fact_dedup
+    EVIDENCE_LINK_AVAILABLE = True
+except ImportError:
+    try:
+        from app.service.evidence_link import normalize_url, is_same_canonical_url
+        from app.service.fact_dedup import get_fact_dedup
+        EVIDENCE_LINK_AVAILABLE = True
+    except ImportError:
+        EVIDENCE_LINK_AVAILABLE = False
+        def normalize_url(url: str) -> str:
+            return url
+        def is_same_canonical_url(a: str, b: str) -> bool:
+            return a == b
+        def get_fact_dedup():
+            return None
 
 
 class DeepScout(BaseAgent):
@@ -180,6 +202,7 @@ URL: {url}
         self.search_api_key = search_api_key
         self.search_cache: Dict[str, List] = {}
         self.fact_fingerprints: Dict[str, str] = {}  # 事实指纹用于去重
+        self.seen_canonical_urls: set = set()  # 已见过的事实来源 canonical_url，用于去重快筛
 
         # 初始化本地知识库搜索服务
         self.milvus_service = None
@@ -328,11 +351,12 @@ URL: {url}
                         content = fact.get("content", "")
                         source_url = fact.get("source_url", "")
 
-                        if not self._is_duplicate_fact(content, source_url):
+                        if not await self._is_duplicate_fact_enhanced(state, content, source_url):
                             fact_entry = {
                                 "id": f"fact_{uuid.uuid4().hex[:8]}",
                                 "content": content,
                                 "source_url": source_url,
+                                "canonical_url": normalize_url(source_url),
                                 "source_name": fact.get("source_name", ""),
                                 "source_type": fact.get("source_type", "news"),
                                 "credibility_score": fact.get("credibility_score", 0.5),
@@ -652,7 +676,7 @@ URL: {url}
                 source_url = fact.get("source_url", "")
 
                 # 去重检查
-                if self._is_duplicate_fact(content, source_url):
+                if await self._is_duplicate_fact_enhanced(state, content, source_url):
                     duplicate_facts += 1
                     continue
 
@@ -660,6 +684,7 @@ URL: {url}
                     "id": f"fact_{uuid.uuid4().hex[:8]}",
                     "content": content,
                     "source_url": source_url,
+                    "canonical_url": normalize_url(source_url),
                     "source_name": fact.get("source_name", ""),
                     "source_type": fact.get("source_type", "news"),
                     "credibility_score": fact.get("credibility_score", 0.5),
@@ -875,11 +900,12 @@ URL: {url}
                 content = fact.get("content", "")
                 source_url = fact.get("source_url", "")
 
-                if not self._is_duplicate_fact(content, source_url):
+                if not await self._is_duplicate_fact_enhanced(state, content, source_url):
                     fact_entry = {
                         "id": f"fact_{uuid.uuid4().hex[:8]}",
                         "content": content,
                         "source_url": source_url,
+                        "canonical_url": normalize_url(source_url),
                         "source_name": fact.get("source_name", ""),
                         "source_type": fact.get("source_type", "news"),
                         "credibility_score": fact.get("credibility_score", 0.5),
@@ -1316,8 +1342,17 @@ URL: {r.get('url', '')}
         return hashlib.md5(fingerprint.encode()).hexdigest()[:16]
 
     def _is_duplicate_fact(self, content: str, source_url: str) -> bool:
-        """检查事实是否重复"""
+        """快速指纹/URL 去重（低成本路径）"""
         fingerprint = self._compute_fact_fingerprint(content)
+
+        # canonical URL 判重（同源页面算重复）
+        try:
+            cand_canonical = normalize_url(source_url)
+            if cand_canonical and cand_canonical in getattr(self, "seen_canonical_urls", set()):
+                self.logger.debug(f"canonical_url 重复: {source_url}")
+                return True
+        except Exception:
+            pass
 
         # 检查指纹是否已存在
         if fingerprint in self.fact_fingerprints:
@@ -1330,6 +1365,35 @@ URL: {r.get('url', '')}
 
         # 保存指纹
         self.fact_fingerprints[fingerprint] = source_url
+        return False
+
+    async def _is_duplicate_fact_enhanced(
+        self,
+        state: ResearchState,
+        content: str,
+        source_url: str
+    ) -> bool:
+        """增强去重：指纹/URL 快筛 + 语义去重"""
+        # 快筛
+        if self._is_duplicate_fact(content, source_url):
+            return True
+
+        # canonical_url 登记（供后续快筛使用）
+        try:
+            cand_canonical = normalize_url(source_url)
+            if cand_canonical:
+                self.seen_canonical_urls.add(cand_canonical)
+        except Exception:
+            pass
+
+        # 语义去重（embedding 不可用时返回 False，不阻塞）
+        if EVIDENCE_LINK_AVAILABLE and get_fact_dedup() is not None:
+            try:
+                existing = state.get("facts", [])[-20:]
+                return await get_fact_dedup().is_duplicate(content, source_url, existing)
+            except Exception as e:
+                self.logger.debug(f"Semantic dedup skipped: {e}")
+                return False
         return False
 
     def _update_knowledge_graph(self, state: ResearchState, entities: List[Dict]) -> None:

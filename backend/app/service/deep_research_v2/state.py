@@ -1,3 +1,6 @@
+# Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
+# 未经授权，禁止转售或仿制。
+
 """
 DeepResearch V2.0 - 状态管理模块
 
@@ -51,7 +54,30 @@ class Fact:
     extracted_at: datetime
     related_sections: List[str] = field(default_factory=list)  # 关联章节ID
     verified: bool = False
+    canonical_url: str = ""  # 规范化 URL，用于去重/引用校验/回源
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class GroundingRecord:
+    """Claim-Evidence Grounding 记录（可追踪链路）"""
+    claim_id: str
+    section_id: str
+    claim_text: str
+    evidence_ids: List[str] = field(default_factory=list)  # 支撑该 claim 的 fact id 列表
+    verdict: Literal["supported", "unsupported", "ambiguous", "contradicted"] = "unsupported"
+    reason: str = ""
+    verifier_agent: str = "verifier"
+
+
+@dataclass
+class RevisionRecord:
+    """章节修订历史（用于自动回滚）"""
+    section_id: str
+    content: str
+    quality_score: float  # 该版本对应的综合质量分
+    verifier_pass_rate: float  # 该版本 verifier 通过率
+    timestamp: str
 
 
 @dataclass
@@ -148,6 +174,16 @@ class ResearchState(TypedDict):
     unresolved_issues: int                  # 未解决问题数
     quality_score: float                    # 质量评分
     pending_search_queries: List[str]       # 待执行的补充搜索查询（审核后需要补充的）
+    review_dimensions: Dict[str, Any]       # 四维质量评分 {factual_consistency, logic_completeness, research_coverage, citation_quality}
+
+    # 可追踪链路（纠错与降噪增强）
+    grounding: List[Dict[str, Any]]         # Claim-Evidence 绑定记录
+    grounding_coverage: float               # grounding 覆盖率（supported / total）
+    revision_history: Dict[str, Any]        # 章节修订历史 {section_id: [RevisionRecord]}
+    rolled_back_sections: List[str]         # 被自动回滚的章节 id
+    citation_validation: Dict[str, Any]     # 引用校验结果 {valid, invalid, orphan, total}
+    budget: Dict[str, Any]                  # 预算执行情况 {token_used, call_count, degraded_steps}
+    grounding_gate: Dict[str, Any]          # 最终 grounding 门禁结果
 
     # 元数据
     logs: List[Dict[str, Any]]              # 执行日志
@@ -196,6 +232,14 @@ def create_initial_state(
         unresolved_issues=0,
         quality_score=0.0,
         pending_search_queries=[],
+        review_dimensions={},
+        grounding=[],
+        grounding_coverage=0.0,
+        revision_history={},
+        rolled_back_sections=[],
+        citation_validation={"valid": 0, "invalid": 0, "orphan": 0, "total": 0, "records": []},
+        budget={"token_used": 0, "call_count": 0, "degraded_steps": [], "budget_exceeded": False},
+        grounding_gate={"grounding_coverage": 0.0, "gate_passed": True, "reason": ""},
         logs=[],
         errors=[],
         messages=[]
@@ -230,5 +274,6 @@ def fact_to_dict(fact: Fact) -> Dict[str, Any]:
         "extracted_at": fact.extracted_at.isoformat(),
         "related_sections": fact.related_sections,
         "verified": fact.verified,
+        "canonical_url": fact.canonical_url,
         "metadata": fact.metadata
     }
