@@ -1,6 +1,3 @@
-# Copyright © 2026 深圳市深维智见教育科技有限公司 版权所有
-# 未经授权，禁止转售或仿制。
-
 """数据库探索路由 - PostgreSQL 可视化 + Text2SQL"""
 import os
 from typing import List, Optional, Any
